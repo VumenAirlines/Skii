@@ -1,0 +1,7 @@
+﻿services:
+  skii:
+    image: skii
+    build:
+      context: .
+      dockerfile: Dockerfile
+
