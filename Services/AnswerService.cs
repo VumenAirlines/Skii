@@ -47,4 +47,38 @@ public class AnswerService(AppDbContext dbContext) : IAnswerService
         await dbContext.SaveChangesAsync(cancellationToken);
         return true;
     }
+
+    public async Task<Object> MakeAnalytics()
+    {
+        Dictionary<DateOnly,DateScore> allDates = [];
+        var dates = await dbContext.DateSelections.Select(x => );
+        foreach (var date in dates)
+        {
+            if(!allDates.TryGetValue(date, out var dateScore))
+                allDates.Add(new KeyValuePair<DateOnly,DateScore>(date.Date,new DateScore{
+                    Date = date.Date,
+                    UserIds = new HashSet<Guid>(date.AnswerId),
+                    Score = date.Choice switch {
+                        Yes => 1,
+                        No=>-,
+                        Maybe=>0,
+                        _ => throw new Exception(),
+                    } ;
+                }))
+            else 
+            {
+                dateScore.UserIds.Add(date.AnsweId);
+                dateScore.Score += Score = date.Choice switch {
+                        Yes => 1,
+                        No=>-,
+                        Maybe=>0,
+                        _ => throw new Exception(),
+                    } ;
+            
+            }
+            
+        }
+
+
+    }
 }
