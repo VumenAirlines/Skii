@@ -29,6 +29,18 @@ public partial class AnswerController(IAnswerService answerService, IValidator<A
             return NotFound();
         return Ok(answer);
     }
+    [HttpGet]
+    [ProducesResponseType(typeof(Dictionary<DateOnly,DateScore>), 200)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(500)]
+    public async Task<IActionResult> GetAnalytics(CancellationToken cancellationToken)
+    {
+        if (await answerService.MakeAnalytics() is not { } analytics)
+            return NotFound();
+        return Ok(analytics);
+    }
+    
     [HttpPost]
     [ProducesResponseType(typeof(AnswerDto), 201)]
     [ProducesResponseType(400)]

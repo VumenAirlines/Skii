@@ -10,4 +10,6 @@ public interface IAnswerService
 
    Task<bool> UpdateAnswerAsync(Guid id, UpdateAnswerParsedDto updateAnswerDto, Guid userId,
       CancellationToken cancellationToken = default);
+
+   Task<Dictionary<int, (int MaxSum, int StartIndex)>> MakeAnalytics();
 }

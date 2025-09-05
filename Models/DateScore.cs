@@ -1,5 +1,5 @@
 
-namespace Skii.Models
+namespace Skii.Models;
 
 public class DateScore 
 {
