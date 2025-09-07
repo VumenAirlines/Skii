@@ -51,6 +51,7 @@ public class Program
                 
 
             });
+            app.UseStaticFiles();
         }
 
         app.UseHttpsRedirection();

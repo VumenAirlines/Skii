@@ -50,7 +50,7 @@ public partial class AnswerController(IAnswerService answerService, IValidator<A
     {
         ValidationResult res = await answerValidator.ValidateAsync(answer, cancellationToken);
         if (!res.IsValid)
-            return BadRequest();
+            return BadRequest(res.Errors);
         answer.UserId = UserId;
         if (await answerService.CreateAnswerAsync(answer, cancellationToken) is not {} createdAnswer)
             return StatusCode(StatusCodes.Status500InternalServerError);

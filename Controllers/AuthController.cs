@@ -51,4 +51,37 @@ public class AuthController(IJwtService jwtService,IAuthService authService) :Co
             return Ok(users);
         return NotFound();
     }
+    [HttpGet("make-user")]
+    public async Task<IActionResult> MakeTestUser()
+    {
+        var users = new Dictionary<string, string>
+        {
+            ["Olivia Carter"] = "olivia.carter87@example.com",
+            ["Liam Novak"] = "liam.novak22@example.com",
+            ["Sophia Ramirez"] = "sophia.ramirez10@example.com",
+            ["Ethan Becker"] = "ethan.becker03@example.com",
+            ["Amelia Wong"] = "amelia.wong19@example.com",
+            ["Noah Patel"] = "noah.patel55@example.com",
+            ["Isabella Rossi"] = "isabella.rossi72@example.com",
+            ["Mason Clarke"] = "mason.clarke48@example.com",
+            ["Mia Schneider"] = "mia.schneider34@example.com",
+            ["Lucas Kim"] = "lucas.kim91@example.com"
+        };
+        var userIds = new List<string>();
+        foreach (var userKvp in users)
+        {
+            var user = new User
+            {
+                GoogleId = userKvp.Key,
+                Name =  userKvp.Key,
+                Email = userKvp.Value
+            };
+            var token = jwtService.GenerateJwtToken(user.Email,user.GoogleId,user.Id);
+            userIds.Add($"\"{token}\"");
+       
+            await authService.AddUser(user);
+        }
+
+        return Ok($"[{string.Join(", ",userIds)}]");
+    }
 }

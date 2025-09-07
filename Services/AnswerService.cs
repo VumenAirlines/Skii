@@ -1,7 +1,9 @@
 using System.Collections.Immutable;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Skii.Binders;
+using Skii.Constants;
 using Skii.Data;
 using Skii.DTOs;
 using Skii.Enums;
@@ -22,7 +24,7 @@ public class AnswerService(AppDbContext dbContext) : IAnswerService
 
     public async Task<AnswerDto> CreateAnswerAsync( Answer answer , CancellationToken cancellationToken=default)
     {
-       
+        
         await dbContext.Answers.AddAsync(answer, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         return new AnswerDto(answer.Id, answer.MinLength,answer.MaxLength,  answer.SkiiOnFirstDay,answer.PreferWeekends, answer.AvailableDates);
@@ -49,90 +51,97 @@ public class AnswerService(AppDbContext dbContext) : IAnswerService
             answer.PreferWeekends = updateAnswerDto.PreferWeekends.Value;
         await dbContext.SaveChangesAsync(cancellationToken);
         return true;
+        
     }
 
-    public async Task<Dictionary<int, (int MaxSum, int StartIndex)>> MakeAnalytics()
+    public async Task<Dictionary<int, List<DateResult>>> MakeAnalytics()
     {
+        Dictionary<int, List<DateResult>> res;
+        DateOnly startDate = DateOnly.Parse(AnswerConstants.StartDate);
+        DateOnly endDate = DateOnly.Parse(AnswerConstants.EndDate);
 
-
-        Dictionary<DateOnly, DateScore> allDates = [];
-        List<DateSelection> dates = await dbContext.DateSelections.AsNoTracking().ToListAsync();
-        bool preferWeekends = await dbContext.Answers
-            .Select(a => a.PreferWeekends ? 1 : -1)
-            .SumAsync() > 0;
+        var dates = await dbContext.DateSelections
+            .AsNoTracking()
+            .Include(x => x.Answer).Select(ds=>new
+            {
+                UserId = ds.Answer.UserId, 
+                Date = ds.Date, 
+                Choice = ds.Choice!.Value,
+                MinLength = ds.Answer.MinLength,
+                MaxLength = ds.Answer.MaxLength,
+                PreferWeekends = ds.Answer.PreferWeekends
+            }).ToArrayAsync();
+        if (dates.Length == 0) throw new InvalidDataException("Query is empty");
         
+        int minLength = dates[0].MinLength;
+        int maxLength = dates[0].MaxLength;
+        int weekendPreference = 0;
         foreach (var date in dates)
         {
-            if (!allDates.TryGetValue(date.Date, out var dateScore))
-                allDates.Add(date.Date, new DateScore
-                {
-                    Date = date.Date,
-                    UserIds = [date.AnswerId],
-                    Score = date.Date.IsWeekend() && preferWeekends ? 1 : 0 + date.Choice switch
-                    {
-                        DateChoices.Yes => 1,
-                        DateChoices.No => -1,
-                        DateChoices.Maybe => 0,
-                        _ => throw new Exception(),
-                    },
-                });
-            else
+            minLength = int.Min(minLength, date.MinLength);
+            maxLength = int.Max(maxLength, date.MaxLength);
+            weekendPreference += date.PreferWeekends ? 1 : -1;
+        }
+
+        
+        bool preferWeekends = weekendPreference > 0;
+        
+        var datesAvailableByUser = dates
+            .GroupBy(ds => ds.UserId)
+            .AsParallel()
+            .Select(g => new UserAvailabilities
             {
-                dateScore.UserIds.Add(date.AnswerId);
-                dateScore.Score += date.Date.IsWeekend() && preferWeekends ? 1 : 0 +  date.Choice switch
-                {
-                    DateChoices.Yes => 1,
-                    DateChoices.No => -1,
-                    DateChoices.Maybe => 0,
-                    _ => throw new Exception(),
-                };
-            }
+                UserId = g.Key,
+                Ranges = DateRange.GetAvailableRanges(
+                    new SortedDictionary<DateOnly, DateChoices>(
+                        g.ToDictionary(ds => ds.Date, ds => ds.Choice)
+                    )
+                )
+            })
+            .ToArray();
 
-           
-        }
-
-        var ordered = allDates.OrderBy(x => x.Key).ToImmutableList();
-        int windowSizeMin = await dbContext.Answers.AsNoTracking().Select(x => x.MinLength).MinAsync();
-        int windowSizeMax = await dbContext.Answers.AsNoTracking().Select(x => x.MaxLength).MaxAsync();
-        int length = ordered.Count;
-
-        if (windowSizeMin >= windowSizeMax)
-            throw new InvalidDataException("Maximum window size must be larger than minimum");
-        if (length < windowSizeMin)
-            throw new InvalidDataException("Window size must be less than length of array");
-
-        int[] arr = new int [length + 1];
-
-        Span<int> prefixSumList = new Span<int>(arr)
-        {
-            [0] = 0
-        };
-        int index = 1;
-        int runningSum = 0;
-        foreach (var kvp in ordered)
-        {
-            runningSum += kvp.Value.Score;
-            prefixSumList[index++] = runningSum;
-        }
-
-        Dictionary<int, (int MaxSum, int StartIndex)> results = new(windowSizeMax - windowSizeMin + 1);
-
-        for (int windowSize = windowSizeMin; windowSize <= windowSizeMax; windowSize++)
-        {
-            int bestWindowIndex = -1;
-            int maxSum = int.MinValue;
-
-            for (int j = 0; j <= length - windowSize; j++)
+        var tasks = Enumerable.Range(minLength, maxLength - minLength + 1)
+            .AsParallel()
+            .Select(x => new
             {
-                int windowSum = prefixSumList[j + windowSize] - prefixSumList[j];
-                if (windowSum <= maxSum) continue;
-                maxSum = windowSum;
-                bestWindowIndex = j;
-            }
-
-            results.Add(windowSize, (maxSum, bestWindowIndex));
-        }
-
-        return results;
+                Length = x,
+                Res = CalculateUsersInRange(x, startDate, endDate, datesAvailableByUser)
+            }).ToArray();
+        return tasks.ToDictionary(x => x.Length, x => x.Res);
     }
+    private static List<DateResult> CalculateUsersInRange(
+        int length, 
+        DateOnly startDate, 
+        DateOnly endDate, 
+        UserAvailabilities[] userAvailabilities)
+    {
+        List<DateResult> dateResults = [];
+        DateOnly finalDate = endDate.AddDays(-length + 1);
+    
+        for (DateOnly current = startDate; current <= finalDate; current = current.AddDays(1))
+        {
+            DateOnly end = current.AddDays(length - 1);
+            Guid[] consistentUsers = UserAvailabilities.GetUsersInRange(current, end, userAvailabilities);
+        
+            dateResults.Add(new DateResult
+            {
+                Range = new DateRange(current, end),
+                UserIds = consistentUsers
+            });
+        }
+        
+        var sortedResults = dateResults
+                .OrderByDescending(d => d.UserIds.Length)
+                .Take(AnswerConstants.TopAmnt)
+                .ToList();
+    
+        return sortedResults;
+    }
+    
+    
+
+   
+    
+
+   
 }
